@@ -6,7 +6,7 @@ namespace rtadatatool
 {
     public class RtaDiagramExtractor
     {
-        private const string rtaDiagramDirectory = @".\RtaDiagrams";
+        private const string rtaDiagramDirectory = @"./RtaDiagramByCards";
 
         private Tuple<int, int> rtaIdXlsCell;
 
@@ -55,6 +55,8 @@ namespace rtadatatool
             foreach (Worksheet sheet in book.Worksheets)
             {
                 var rtaId = (string)sheet.GetCalculateValue(rtaIdXlsCell.Item1, rtaIdXlsCell.Item2);
+
+                if (rtaId == String.Empty) continue;
 
                 if (sheet.Pictures.Count == 0)
                 {

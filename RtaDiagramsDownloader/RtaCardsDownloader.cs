@@ -1,71 +1,49 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Configuration;
-using System.Linq;
-using System.Security.Policy;
+﻿using System.Configuration;
+using System.IO.Compression;
 using System.Text;
-using System.Threading.Tasks;
 using Newtonsoft.Json;
+using RtaDiagramsDownloader.Models;
 
 namespace rtadatatool
 {
     public class RtaCardsDownloader
     {
-        private const string rtaExportedCardsDirectory = @".\RtaExportedCards";
+        private const int reqDelay = 1000;
+
+        private FileFormat downloadFormat;
+
+        private string rtaExportedCardsDirectory;
 
         private string urlRtaCardsGenerate;
 
         private string urlRtaCardsExport;
 
-        private DateOnly rtaStartDate;
+        private DownloadSetting setting;
 
-        private DateOnly rtaEndDate;
+        private Logger logger = new Logger();
 
-        private readonly DateOnly rtaMinDate = new DateOnly(2015, 1, 1);
-
-        private readonly DateOnly rtaMaxDate = new DateOnly(DateTime.Now.Year, DateTime.Now.Month, 1);
-
-        public RtaCardsDownloader()
+        public RtaCardsDownloader(FileFormat format, DownloadSetting setting)
         {
-            try
-            {
-                urlRtaCardsGenerate = ConfigurationManager.AppSettings["urlRtaCardsGenerate"].ToString();
-                urlRtaCardsExport = ConfigurationManager.AppSettings["urlRtaCardsExport"].ToString();
-                rtaStartDate = new DateOnly(
-                    int.Parse(ConfigurationManager.AppSettings["rtaStartYear"]),
-                    int.Parse(ConfigurationManager.AppSettings["rtaStartMonth"]),
-                    1);
-                rtaEndDate = new DateOnly(
-                    int.Parse(ConfigurationManager.AppSettings["rtaEndYear"]),
-                    int.Parse(ConfigurationManager.AppSettings["rtaEndMonth"]),
-                    1);
-            }
-            catch (Exception)
-            {
-                throw new Exception("Ошибка определение параметров выгрузки карточек ДТП.");
-            }
-
-            if (rtaStartDate < rtaMinDate)
-            {
-                rtaStartDate = rtaMinDate;
-            }
-
-            if (rtaEndDate > rtaMaxDate)
-            {
-                rtaEndDate = rtaMaxDate;
-            }
+            downloadFormat = format;
+            this.setting = setting;
+            rtaExportedCardsDirectory = @$"./{Extensions.GetExportedCardsDirectoryByFormat(format, setting)}";
+            urlRtaCardsGenerate = Extensions.GetCardsGenerateUrlByFormat(format)!;
+            urlRtaCardsExport = ConfigurationManager.AppSettings["urlRtaCardsExport"]!.ToString();
         }
 
         public async Task DownloadCards()
         {
-            var currentStartDate = rtaStartDate;
+            var currentStartDate = setting.dateStart;
             var currentEndDate = GetEndOfMonthDate(currentStartDate);
 
-            ClearExportedCardsDirectory();
+            ClearDirectory(rtaExportedCardsDirectory);
+            logger.Log($"Выгрузка карточек в формате {Extensions.GetFileExtByFormat(downloadFormat)}.");
+            logger.Log($"Период: {setting.dateStart:dd.MM.yyyy} - {GetEndOfMonthDate(setting.dateEnd):dd.MM.yyyy}.");
+            logger.Log($"Путь выгрузки: {rtaExportedCardsDirectory}.");
 
-            while (currentStartDate <= rtaEndDate)
+            while (currentStartDate <= setting.dateEnd)
             {
-                Thread.Sleep(5000);
+                Thread.Sleep(reqDelay);
                 await DownloadCardsByPeriod(currentStartDate, currentEndDate);
 
                 currentStartDate = currentStartDate.AddMonths(1);
@@ -75,24 +53,60 @@ namespace rtadatatool
 
         private async Task DownloadCardsByPeriod(DateOnly startDate, DateOnly endDate)
         {
+            logger.Log($"Подпериод {startDate:dd.MM.yyyy} - {endDate:dd.MM.yyyy}");
+
             var dataPackNum = await GenerateCardsByPeriod(startDate, endDate);
-            await ExportCardsGeneratedPack(dataPackNum, startDate, endDate);
+            if (dataPackNum == null)
+            {
+                logger.Log($"ОШИБКА генерации пакета карточек!!!");
+                return;
+            }
+            logger.Log($"ОК пакет карточек сгенерирован: {dataPackNum}.");
+
+
+            if (!await ExportCardsGeneratedPack(dataPackNum, startDate, endDate))
+            {
+                logger.Log($"ОШИБКА не удалось скачать сгенерированный пакет карточек!!!");
+                return;
+            }
+            logger.Log($"ОК пакет карточек выгружен.");
         }
 
-        private async Task ExportCardsGeneratedPack(string dataPackNum, DateOnly startDate, DateOnly endDate)
+        private async Task<bool> ExportCardsGeneratedPack(string dataPackNum, DateOnly startDate, DateOnly endDate)
         {
+            var tmpPackZipPath = $"./{dataPackNum}.zip";
             using (var client = new HttpClient())
             {
-                await client.DownloadFile(
-                    $"{urlRtaCardsExport}?data={dataPackNum}", 
-                    $"{rtaExportedCardsDirectory}/" +
-                    $"{startDate.ToString("dd_MM_yyyy")}-{endDate.ToString("dd_MM_yyyy")}.zip");
+                await client.DownloadFile($"{urlRtaCardsExport}?data={dataPackNum}", tmpPackZipPath);
             }
+
+            if (!File.Exists(tmpPackZipPath))
+            {
+                return false;
+            }
+
+            using (ZipArchive archive = ZipFile.OpenRead(tmpPackZipPath))
+            {
+                var counter = 0;
+
+                foreach (ZipArchiveEntry entry in archive.Entries)
+                {
+                    if (entry.FullName.EndsWith($".{downloadFormat}", StringComparison.OrdinalIgnoreCase))
+                    {
+                        counter++;
+                        entry.ExtractToFile($"{rtaExportedCardsDirectory}/" +
+                            $"{startDate:ddMMyyyy}_{endDate:ddMMyyyy}_{counter}.{downloadFormat}");
+                    }
+                }
+            }
+
+            File.Delete(tmpPackZipPath);
+            return true;
         }
 
-        private async Task<string> GenerateCardsByPeriod(DateOnly startDate, DateOnly endDate)
+        private async Task<string?> GenerateCardsByPeriod(DateOnly startDate, DateOnly endDate)
         {
-            var rtaCardsPackNum = string.Empty;
+            string? rtaCardsPackNum = null;
             var requestData = $"{{\"data\":\"{{" +
                 $"\\\"date_st\\\":\\\"{startDate.ToString("dd/MM/yyyy")}\\\"," +
                 $"\\\"date_end\\\":\\\"{endDate.ToString("dd/MM/yyyy")}\\\"," +
@@ -108,12 +122,14 @@ namespace rtadatatool
                     urlRtaCardsGenerate,
                     new StringContent(requestData, Encoding.UTF8, "application/json"));
 
-                Console.WriteLine($"Response status code: {response.StatusCode}");
-                string content = await response.Content.ReadAsStringAsync();
-                Console.WriteLine($"Response content: {content}");
+                if (response.StatusCode != System.Net.HttpStatusCode.OK)
+                {
+                    return null;
+                }
 
+                string content = await response.Content.ReadAsStringAsync();
                 var respData = JsonConvert.DeserializeObject<Models.CardsGenerateResponse>(content);
-                rtaCardsPackNum = respData.data;
+                rtaCardsPackNum = respData?.data;
             }
 
             return rtaCardsPackNum;
@@ -122,14 +138,14 @@ namespace rtadatatool
         private DateOnly GetEndOfMonthDate(DateOnly date)
             => date.AddDays(DateTime.DaysInMonth(date.Year, date.Month) - 1);
 
-        private void ClearExportedCardsDirectory()
+        private void ClearDirectory(string dir)
         {
-            if (Directory.Exists(rtaExportedCardsDirectory))
+            if (Directory.Exists(dir))
             {
-                Directory.Delete(rtaExportedCardsDirectory, true);
+                Directory.Delete(dir, true);
             }
 
-            Directory.CreateDirectory(rtaExportedCardsDirectory);
+            Directory.CreateDirectory(dir);
         }
     }
 }
