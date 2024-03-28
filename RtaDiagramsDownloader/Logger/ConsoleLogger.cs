@@ -1,8 +1,8 @@
-﻿namespace RtaDiagramsDownloader.Models
+﻿namespace RtaDiagramsDownloader
 {
-    public class Logger
+    public class ConsoleLogger : ILogger
     {
-        public Logger() { }
+        public ConsoleLogger() { }
 
         public void Log(string message)
         {

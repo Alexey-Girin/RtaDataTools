@@ -1,4 +1,4 @@
-﻿namespace rtadatatool.Models
+﻿namespace RtaDiagramsDownloader
 {
     public class CardsGenerateResponse
     {

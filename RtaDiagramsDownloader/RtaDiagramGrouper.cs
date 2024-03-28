@@ -4,106 +4,131 @@ namespace RtaDiagramsDownloader
 {
     public class RtaDiagramGrouper
     {
-        private const string rtaDiagramDirectory = @"./RtaDiagramByGroups";
+        private string rtaDiagramDirectoryByGroups;
 
-        private Dictionary<string, List<string>> dic = new Dictionary<string, List<string>>(); 
+        private string rtaFullCardsDirectory;
 
-        public RtaDiagramGrouper() { }
+        private DownloadSetting setting;
 
-        public void GroupDiagrams(string dirPath)
+        private ILogger logger;
+
+        private Dictionary<string, List<string>> rtaDiagramCollectionByCode = new Dictionary<string, List<string>>();
+
+        public RtaDiagramGrouper(DownloadSetting setting, ILogger logger)
         {
-            var files = Directory.GetFiles(dirPath);
+            this.setting = setting;
+            this.logger = logger;
 
+            rtaDiagramDirectoryByGroups = @$"./{setting.DirectoryDiagramsByGroups}";
+            rtaFullCardsDirectory = @$"./{setting.DirectoryExportedCardsXml}";
+        }
+
+        public void GroupDiagrams(FileFormat fileFormat)
+        {
+            if (fileFormat != FileFormat.Xml)
+            {
+                logger.Log("ОШИБКА. Группировка схем по кодам доступна только с использованием xml-карточек.");
+            }
+
+            logger.Log("Группировка схем ДТП.");
+            logger.Log($"Пусть для сгруппированных схем ДТП: {rtaDiagramDirectoryByGroups}");
+
+            GroupDiagramsViaXml();
+
+            logger.Log($"Схемы ДТП по кодам собраны. К-во: {rtaDiagramCollectionByCode.Count}");
+        }
+
+        private void GroupDiagramsViaXml()
+        {
+            if (!Directory.Exists(rtaFullCardsDirectory))
+            {
+                logger.Log($"ОШИБКА. Не удалось найти директорию с полными карточками: {rtaFullCardsDirectory}.");
+                return;
+            }
+
+            var files = Directory.GetFiles(rtaFullCardsDirectory);
             foreach (var xmlFilePath in files)
             {
-                List<Tuple<string, string>> dtpDataList = new List<Tuple<string, string>>();
+                if (!File.Exists(xmlFilePath))
+                {
+                    logger.Log($"ОШИБКА. Не удалось найти файл с полными карточками: {xmlFilePath}.");
+                    continue;
+                }
 
-                XmlDocument xmlDoc = new XmlDocument();
+                var xmlDoc = new XmlDocument();
                 xmlDoc.Load(xmlFilePath);
+                if (xmlDoc == null)
+                {
+                    logger.Log($"ОШИБКА. Не удалось открыть файл с полными карточками: {xmlFilePath}.");
+                    continue;
+                }
 
-                XmlNodeList tabNodes = xmlDoc.SelectNodes("//tab");
+                var tabNodes = xmlDoc.SelectNodes("//tab");
+                if (tabNodes == null)
+                {
+                    logger.Log($"ОШИБКА формата. Не удалось распарсить файл с полными карточками: {xmlFilePath}.");
+                    continue;
+                }
 
                 foreach (XmlNode tabNode in tabNodes)
                 {
-                    // Считываем значения EMTP_NUMBER и s_dtp
-                    string emtpNumber = tabNode.SelectSingleNode("EMTP_NUMBER")?.InnerText;
-                    string sDtp = tabNode.SelectSingleNode("infoDtp/s_dtp")?.InnerText;
+                    var emtpNumber = tabNode.SelectSingleNode("EMTP_NUMBER")?.InnerText;
+                    var diagramCode = tabNode.SelectSingleNode("infoDtp/s_dtp")?.InnerText;
 
-                    if (string.IsNullOrEmpty(emtpNumber) || string.IsNullOrEmpty(sDtp))
+                    if (string.IsNullOrEmpty(emtpNumber) || string.IsNullOrEmpty(diagramCode))
                     {
                         continue;
                     }
 
-                    if (dic.ContainsKey(sDtp))
+                    if (rtaDiagramCollectionByCode.ContainsKey(diagramCode))
                     {
-                        dic[sDtp].Add(emtpNumber);
+                        if (rtaDiagramCollectionByCode[diagramCode].Find(e => e == emtpNumber) != null)
+                        {
+                            continue;
+                        }
+
+                        rtaDiagramCollectionByCode[diagramCode].Add(emtpNumber);
                         continue;
                     }
 
-                    if (!File.Exists($"./RtaDiagramByCards/{emtpNumber}.png"))
-                    {
-                        continue;
-                    }
-
-                    dic.Add(sDtp, new List<string>() { emtpNumber });
+                    rtaDiagramCollectionByCode.Add(diagramCode, new List<string>() { emtpNumber });
                 }
             }
 
-            Replace();
+            CollectRtaDiagramsByGroup();
         }
 
-        private void Replace()
+        private void CollectRtaDiagramsByGroup()
         {
-            ClearDiagramByGroupsDirectory();
+            RecreateDir(rtaDiagramDirectoryByGroups);
 
-            Console.WriteLine($"Записей: {dic.Count}");
-            foreach (var row in dic)
+            foreach (var diagrams in rtaDiagramCollectionByCode)
             {
-                File.Copy($"./RtaDiagramByCards/{row.Value[0]}.png", $"{rtaDiagramDirectory}/{row.Key}.png");
-            }
-        }
+                Directory.CreateDirectory(@$"{rtaDiagramDirectoryByGroups}/{diagrams.Key}");
 
-        public void Correct(List<string> codes)
-        {
-            var listUpdated = new List<string>();
-            var listSearchError = new List<string>();
-            var listEmpty = new List<string>();
-
-            foreach (var code in codes)
-            {
-                if (!dic.ContainsKey((string)code))
+                foreach (var diagram in diagrams.Value)
                 {
-                    listSearchError.Add(code);
-                    continue;
+                    var initDgFile = getInitDgPath(diagram);
+                    if (!File.Exists(initDgFile))
+                    {
+                        continue;
+                    }
+
+                    File.Copy(initDgFile, $"{rtaDiagramDirectoryByGroups}/{diagrams.Key}/{diagram}.png");
                 }
-
-                dic[code].RemoveAt(0);
-
-                if (dic[code].Count == 0)
-                {
-                    listEmpty.Add(code);
-                    dic.Remove(code);
-                    continue;
-                }
-
-                listUpdated.Add(code);
             }
-
-            Replace();
-
-            Console.WriteLine($"Следующие коды пропущены (не были найдены): {string.Join(",", listSearchError)}");
-            Console.WriteLine($"Следующие коды удалены (нет корректных схем): {string.Join(",", listEmpty)}");
-            Console.WriteLine($"Для следующих кодов обновлены схемы: {string.Join(",", listUpdated)}");
         }
 
-        private void ClearDiagramByGroupsDirectory()
-        {
-            if (Directory.Exists(rtaDiagramDirectory))
-            {
-                Directory.Delete(rtaDiagramDirectory, true);
-            }
+        private string getInitDgPath(string fileName) 
+            => $"./{setting.DirectoryDiagramsByCards}/{fileName}.png";
 
-            Directory.CreateDirectory(rtaDiagramDirectory);
+        private void RecreateDir(string dir)
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, true);
+            }
+            Directory.CreateDirectory(dir);
         }
     }
 }

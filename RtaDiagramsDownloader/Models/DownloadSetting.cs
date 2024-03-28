@@ -1,7 +1,4 @@
-﻿using System;
-using System.Configuration;
-
-namespace RtaDiagramsDownloader.Models
+﻿namespace RtaDiagramsDownloader
 {
     public class DownloadSetting
     {
@@ -9,9 +6,16 @@ namespace RtaDiagramsDownloader.Models
 
         public string DirectoryExportedCardsXls { get; private set; } = "RtaExportedCardsXls";
 
+        /// <summary>
+        /// Директория для схем по карточкам
+        /// </summary>
         public string DirectoryDiagramsByCards { get; private set; } = "RtaDiagramByCards";
 
+        /// <summary>
+        /// Директория для схем по кодам (по всем схемам на каждый код)
+        /// </summary>
         public string DirectoryDiagramsByGroups { get; private set; } = "RtaDiagramByGroups";
+
 
         private readonly DateOnly rtaMinDate = new DateOnly(2015, 1, 1);
 

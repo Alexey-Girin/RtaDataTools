@@ -1,10 +1,7 @@
-﻿using rtadatatool;
-using RtaDiagramsDownloader;
-using System.Collections;
-using System.Configuration;
+﻿using System.Configuration;
 using CommandLine;
-using RtaDiagramsDownloader.Models;
-using Spire.Xls;
+
+namespace RtaDiagramsDownloader;
 
 public class Program
 {
@@ -17,108 +14,89 @@ public class Program
         public string? dateEnd { get; set; }
     }
 
-    public static void Main(string[] args)
+    public static async Task Main(string[] args)
     {
-        Parser.Default.ParseArguments<Options>(args).WithParsed(async o =>
+        await Parser.Default.ParseArguments<Options>(args).WithParsedAsync(async o =>
         {
             DateOnly dateStart;
             DateOnly dateEnd;
+
+            var logger = new ConsoleLogger();
 
             if (o.dateStart != null && o.dateEnd != null)
             {
                 if (!DateOnly.TryParse(o.dateStart, out dateStart))
                 {
-                    Console.WriteLine($"Некорректный формат параметра dateStart.");
+                    logger.Log($"Некорректный формат параметра dateStart.");
                     return;
                 }
 
                 if (!DateOnly.TryParse(o.dateEnd, out dateEnd))
                 {
-                    Console.WriteLine($"Некорректный формат параметра dateEnd.");
+                    logger.Log($"Некорректный формат параметра dateEnd.");
                     return;
                 }
 
-                await DownloadDiagrams(new DownloadSetting(dateStart, dateEnd));
+                await DownloadDiagrams(new DownloadSetting(dateStart, dateEnd), logger);
             }
         });
-
-        Console.ReadKey();
     }
 
-    private static async Task DownloadDiagrams(DownloadSetting setting)
+    private static async Task DownloadDiagrams(DownloadSetting setting, ILogger logger)
     {
-        if (!CheckConfFile())
+        if (!CheckConfFile(logger))
         {
             return;
         }
 
-        var urlRtaCardsGenerateXls = ConfigurationManager.AppSettings["urlRtaCardsGenerateXls"]!.ToString();
-        var urlRtaCardsGenerateXml = ConfigurationManager.AppSettings["urlRtaCardsGenerateXml"]!.ToString();
-        var urlRtaCardsExport = ConfigurationManager.AppSettings["urlRtaCardsExport"]!.ToString();
+        // Загрузка упрощенных карточек ДТП со схемами в формате xls.
+        var downloader = new RtaCardsDownloader(FileFormat.Xls, setting, logger);
+        await downloader.DownloadCards();
 
-        // Загрузка упрощенных карточек ДТП в формате xls.
-        var downloaderXls = new RtaCardsDownloader(FileFormat.Xls, setting);
-        await downloaderXls.DownloadCards();
-
-        /*
         // Извлечение схем ДТП из xls-файлов загруженных карточек.
-        var extractor = new RtaDiagramExtractor();
-        foreach (var file in Directory.GetFiles(@$"./{setting.DirectoryExportedCardsXls}"))
-        {
-            extractor.ExtractImagesFromXls(file);
-        }
+        var extractor = new RtaDiagramExtractor(setting, logger);
+        extractor.ExtractImagesFromFiles(FileFormat.Xls);
 
         // Загрузка полных карточек ДТП в формате xml.
-        var downloaderXml = new RtaCardsDownloader(urlRtaCardsGenerateXml, urlRtaCardsExport, "xml", setting);
-        await downloaderXml.DownloadCards();
-        */
-        /*
-        var diagramGrouper = new RtaDiagramGrouper();
-        diagramGrouper.GroupDiagrams(@$"./RtaExportedCardsxml");
+        downloader.DownloadFormat = FileFormat.Xml;
+        await downloader.DownloadCards();
 
-        while (true)
-        {
-            Console.WriteLine("Требуется корректировка? (да/нет)");
-            var resp = Console.ReadLine();
-
-            if (resp == "нет")
-            {
-                break;
-            }
-
-            if (resp != "да")
-            {
-                continue;
-            }
-
-            Console.WriteLine("Введите коды для корректировки (список через запятую):");
-            var codes = Console.ReadLine().Split(",").ToList();
-            diagramGrouper.Correct(codes);
-        }
-        */
+        // Группировка извлеченных схем ДТП по их кодам.
+        var diagramGrouper = new RtaDiagramGrouper(setting, logger);
+        diagramGrouper.GroupDiagrams(FileFormat.Xml);
     }
 
-    private static bool CheckConfFile()
+    private static bool CheckConfFile(ILogger logger)
     {
         var confParamList = new List<string>() { 
             "urlRtaCardsGenerateXls",
-            "directoryExportedCardsXml",
-            "directoryDiagramsByCards",
-            "directoryDiagramsByGroups"
+            "urlRtaCardsGenerateXml",
+            "urlRtaCardsExport"
         };
 
-        foreach (var confParam in confParamList)
+        var confIntParamList = new List<string>() {
+            "rtaIdRow",
+            "rtaIdColumn"
+        };
+
+        foreach (var confParam in confParamList.Union(confIntParamList))
         {
             if (ConfigurationManager.AppSettings[confParam] == null)
             {
-                PutErrorConfMsgToConsole("urlRtaCardsGenerateXml");
+                logger.Log($"Необходимо установить значение параметра {confParam} в App.config.");
+                return false;
+            }
+        }
+
+        foreach (var confParam in confIntParamList)
+        {
+            if (!int.TryParse(ConfigurationManager.AppSettings[confParam], out _))
+            {
+                logger.Log($"Необходимо установить числовое значение параметра {confParam} в App.config.");
                 return false;
             }
         }
 
         return true;
     }
-
-    private static void PutErrorConfMsgToConsole(string confParam) 
-        => Console.WriteLine($"Необходимо установить значение параметра {confParam} в App.config.");
 }

@@ -1,12 +1,17 @@
-﻿using System.Drawing.Imaging;
-using Spire.Xls;
+﻿using Spire.Xls;
 using System.Configuration;
 
-namespace rtadatatool
+namespace RtaDiagramsDownloader
 {
     public class RtaDiagramExtractor
     {
-        private const string rtaDiagramDirectory = @"./RtaDiagramByCards";
+        private string rtaDiagramDirectory;
+
+        private string directoryExportedCardsXls;
+
+        private int emptyIdCounter = 0;
+
+        private ILogger logger;
 
         private Tuple<int, int> rtaIdXlsCell;
 
@@ -14,15 +19,15 @@ namespace rtadatatool
 
         public List<string> RtaIdDiagramConfuseList { get; set; } = new List<string>();
 
-        public RtaDiagramExtractor()
+        public RtaDiagramExtractor(DownloadSetting setting, ILogger logger)
         {
-            var rtaIdRow = ConfigurationManager.AppSettings["rtaIdRow"];
-            var rtaIdCol = ConfigurationManager.AppSettings["rtaIdColumn"];
+            this.logger = logger;
 
-            if (rtaIdRow == null || rtaIdCol == null)
-            {
-                throw new Exception("Ошибка! Необходимо заполнить поля rtaIdRow и rtaIdColumn в config.");
-            }
+            rtaDiagramDirectory = @$"./{setting.DirectoryDiagramsByCards}";
+            directoryExportedCardsXls = @$"./{setting.DirectoryExportedCardsXls}";
+
+            var rtaIdRow = ConfigurationManager.AppSettings["rtaIdRow"]!;
+            var rtaIdCol = ConfigurationManager.AppSettings["rtaIdColumn"]!;
 
             try
             {
@@ -34,7 +39,39 @@ namespace rtadatatool
             }
         }
 
-        public void ExtractImagesFromXls(string xlsPath)
+        public void ExtractImagesFromFiles(FileFormat fileFormat)
+        {
+            if (fileFormat != FileFormat.Xls)
+            {
+                logger.Log("ОШИБКА извлечения схем ДТП. Извлечение схем доступно для файлов формата xls!!!");
+                return;
+            }
+
+            if (!Directory.Exists(directoryExportedCardsXls))
+            {
+                logger.Log($"ОШИБКА извлечения схем ДТП. Не удалось найти директорию с файлами карточек: " +
+                    $"{directoryExportedCardsXls}.");
+                return;
+            }
+
+            Reload();
+
+            logger.Log($"Извлечение схем ДТП.");
+            logger.Log($"Путь извлечения схем: {rtaDiagramDirectory}.");
+
+            foreach (var file in Directory.GetFiles(directoryExportedCardsXls))
+            {
+                ExtractImagesFromXlsFile(file);
+            }
+
+            logger.Log($"Извлечение схем ДТП выполнено.");
+            logger.Log($"Карточек ДТП с пустым ID: {emptyIdCounter}");
+            logger.Log($"Карточек ДТП без схемы: {RtaIdWithoutDiagramList.Count}");
+            logger.Log($"Карточек ДТП с несколькими изображениями (пропущены): " +
+                $"{RtaIdDiagramConfuseList.Count}");
+        }
+
+        private void ExtractImagesFromXlsFile(string xlsPath)
         {
             var book = new Workbook();
 
@@ -44,19 +81,19 @@ namespace rtadatatool
             }
             catch (FileNotFoundException)
             {
-                throw new Exception($"Ошибка! Не удалось найти xls-файл: {xlsPath}.");
-            }
-
-            if (!Directory.Exists(rtaDiagramDirectory)) 
-            {
-                Directory.CreateDirectory(rtaDiagramDirectory);
+                logger.Log($"ОШИБКА обработка файла карточек. Не удалось найти файл {xlsPath}.");
+                return;
             }
 
             foreach (Worksheet sheet in book.Worksheets)
             {
                 var rtaId = (string)sheet.GetCalculateValue(rtaIdXlsCell.Item1, rtaIdXlsCell.Item2);
 
-                if (rtaId == String.Empty) continue;
+                if (rtaId == null || rtaId == string.Empty)
+                {
+                    emptyIdCounter++;
+                    continue;
+                }
 
                 if (sheet.Pictures.Count == 0)
                 {
@@ -70,8 +107,21 @@ namespace rtadatatool
                     continue;
                 }
 
-                sheet.Pictures[0].Picture.Save(@$"{rtaDiagramDirectory}\{rtaId}.png", ImageFormat.Png);
+                sheet.Pictures[0].SaveToImage(@$"{rtaDiagramDirectory}/{rtaId}.png");
             }
+        }
+
+        private void Reload()
+        {
+            if (Directory.Exists(rtaDiagramDirectory))
+            {
+                Directory.Delete(rtaDiagramDirectory, true);
+            }
+            Directory.CreateDirectory(rtaDiagramDirectory);
+
+            emptyIdCounter = 0;
+            RtaIdWithoutDiagramList.Clear();
+            RtaIdDiagramConfuseList.Clear();
         }
     }
 }

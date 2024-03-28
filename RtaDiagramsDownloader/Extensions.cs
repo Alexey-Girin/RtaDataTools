@@ -1,5 +1,6 @@
-﻿using RtaDiagramsDownloader.Models;
-using System.Configuration;
+﻿using System.Configuration;
+
+namespace RtaDiagramsDownloader;
 
 public static class Extensions
 {

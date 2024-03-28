@@ -2,15 +2,24 @@
 using System.IO.Compression;
 using System.Text;
 using Newtonsoft.Json;
-using RtaDiagramsDownloader.Models;
 
-namespace rtadatatool
+namespace RtaDiagramsDownloader
 {
     public class RtaCardsDownloader
     {
         private const int reqDelay = 1000;
 
         private FileFormat downloadFormat;
+
+        public FileFormat DownloadFormat {
+            get => downloadFormat;
+            set
+            {
+                downloadFormat = value;
+                rtaExportedCardsDirectory = @$"./{Extensions.GetExportedCardsDirectoryByFormat(downloadFormat, setting)}";
+                urlRtaCardsGenerate = Extensions.GetCardsGenerateUrlByFormat(downloadFormat)!;
+            }
+        }
 
         private string rtaExportedCardsDirectory;
 
@@ -20,14 +29,14 @@ namespace rtadatatool
 
         private DownloadSetting setting;
 
-        private Logger logger = new Logger();
+        private ILogger logger;
 
-        public RtaCardsDownloader(FileFormat format, DownloadSetting setting)
+        public RtaCardsDownloader(FileFormat format, DownloadSetting setting, ILogger logger)
         {
-            downloadFormat = format;
             this.setting = setting;
-            rtaExportedCardsDirectory = @$"./{Extensions.GetExportedCardsDirectoryByFormat(format, setting)}";
-            urlRtaCardsGenerate = Extensions.GetCardsGenerateUrlByFormat(format)!;
+            this.logger = logger;
+
+            DownloadFormat = format;
             urlRtaCardsExport = ConfigurationManager.AppSettings["urlRtaCardsExport"]!.ToString();
         }
 
@@ -37,7 +46,7 @@ namespace rtadatatool
             var currentEndDate = GetEndOfMonthDate(currentStartDate);
 
             ClearDirectory(rtaExportedCardsDirectory);
-            logger.Log($"Выгрузка карточек в формате {Extensions.GetFileExtByFormat(downloadFormat)}.");
+            logger.Log($"Выгрузка карточек в формате {Extensions.GetFileExtByFormat(DownloadFormat)}.");
             logger.Log($"Период: {setting.dateStart:dd.MM.yyyy} - {GetEndOfMonthDate(setting.dateEnd):dd.MM.yyyy}.");
             logger.Log($"Путь выгрузки: {rtaExportedCardsDirectory}.");
 
@@ -79,7 +88,6 @@ namespace rtadatatool
             {
                 await client.DownloadFile($"{urlRtaCardsExport}?data={dataPackNum}", tmpPackZipPath);
             }
-
             if (!File.Exists(tmpPackZipPath))
             {
                 return false;
@@ -91,11 +99,12 @@ namespace rtadatatool
 
                 foreach (ZipArchiveEntry entry in archive.Entries)
                 {
-                    if (entry.FullName.EndsWith($".{downloadFormat}", StringComparison.OrdinalIgnoreCase))
+                    if (entry.FullName.EndsWith($".{DownloadFormat}", StringComparison.OrdinalIgnoreCase))
                     {
                         counter++;
                         entry.ExtractToFile($"{rtaExportedCardsDirectory}/" +
-                            $"{startDate:ddMMyyyy}_{endDate:ddMMyyyy}_{counter}.{downloadFormat}");
+                            $"{startDate:ddMMyyyy}_{endDate:ddMMyyyy}_{counter}." +
+                            $"{Extensions.GetFileExtByFormat(DownloadFormat)}");
                     }
                 }
             }
@@ -121,14 +130,13 @@ namespace rtadatatool
                 var response = await client.PostAsync(
                     urlRtaCardsGenerate,
                     new StringContent(requestData, Encoding.UTF8, "application/json"));
-
                 if (response.StatusCode != System.Net.HttpStatusCode.OK)
                 {
                     return null;
                 }
 
                 string content = await response.Content.ReadAsStringAsync();
-                var respData = JsonConvert.DeserializeObject<Models.CardsGenerateResponse>(content);
+                var respData = JsonConvert.DeserializeObject<CardsGenerateResponse>(content);
                 rtaCardsPackNum = respData?.data;
             }
 
