@@ -1,4 +1,9 @@
-﻿using System.Xml;
+﻿using CommandLine.Text;
+using CommandLine;
+using Newtonsoft.Json;
+using System.Drawing;
+using System.Xml;
+using RtaDiagramsDownloader.Models;
 
 namespace RtaDiagramsDownloader
 {
@@ -31,11 +36,40 @@ namespace RtaDiagramsDownloader
             }
 
             logger.Log("Группировка схем ДТП.");
-            logger.Log($"Пусть для сгруппированных схем ДТП: {rtaDiagramDirectoryByGroups}");
+            logger.Log($"Путь для сгруппированных схем ДТП: {rtaDiagramDirectoryByGroups}");
 
             GroupDiagramsViaXml();
 
             logger.Log($"Схемы ДТП по кодам собраны. К-во: {rtaDiagramCollectionByCode.Count}");
+        }
+
+        private string FindGroupRepresentative(string groupPath)
+        {
+            var representatives = new Dictionary<string, RtaGroupRepresentative>();
+            var files = Directory.GetFiles(groupPath);
+            foreach (var file in files)
+            {
+                if (file == null)
+                {
+                    continue;
+                }
+
+                var hash = GetImageHash(new Bitmap(file));
+                if (representatives.ContainsKey(hash))
+                {
+                    representatives[hash].Counter += 1;
+                    continue;
+                }
+                
+                representatives.Add(hash, new RtaGroupRepresentative(file));
+            }
+    
+            if (representatives.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            return representatives.MaxBy(e => e.Value.Counter).Value.RtaNumSamplePath;
         }
 
         private void GroupDiagramsViaXml()
@@ -94,17 +128,20 @@ namespace RtaDiagramsDownloader
                     rtaDiagramCollectionByCode.Add(diagramCode, new List<string>() { emtpNumber });
                 }
             }
-
+            
             CollectRtaDiagramsByGroup();
         }
 
         private void CollectRtaDiagramsByGroup()
         {
             RecreateDir(rtaDiagramDirectoryByGroups);
+            var resultPath = @$"{rtaDiagramDirectoryByGroups}/000_GROUP_RESULT";
+            Directory.CreateDirectory(resultPath);
 
             foreach (var diagrams in rtaDiagramCollectionByCode)
             {
-                Directory.CreateDirectory(@$"{rtaDiagramDirectoryByGroups}/{diagrams.Key}");
+                var groupPath = @$"{rtaDiagramDirectoryByGroups}/{diagrams.Key}";
+                Directory.CreateDirectory(groupPath);
 
                 foreach (var diagram in diagrams.Value)
                 {
@@ -116,6 +153,14 @@ namespace RtaDiagramsDownloader
 
                     File.Copy(initDgFile, $"{rtaDiagramDirectoryByGroups}/{diagrams.Key}/{diagram}.png");
                 }
+
+                var represPath = FindGroupRepresentative(groupPath);
+                if (represPath == null)
+                {
+                    continue;
+                }
+
+                File.Copy(represPath, @$"{resultPath}/{diagrams.Key}.png");
             }
         }
 
@@ -129,6 +174,23 @@ namespace RtaDiagramsDownloader
                 Directory.Delete(dir, true);
             }
             Directory.CreateDirectory(dir);
+        }
+
+        private string GetImageHash(Bitmap bmpSource)
+        {
+            var lResult = string.Empty;
+
+            var bmpMin = new Bitmap(bmpSource, new Size(16, 16));
+            for (int j = 0; j < bmpMin.Height; j++)
+            {
+                for (int i = 0; i < bmpMin.Width; i++)
+                {
+                    var pixelBl = bmpMin.GetPixel(i, j).GetBrightness() < 0.5f;
+                    lResult += pixelBl ? '1' : '0';
+                }
+            }
+
+            return lResult;
         }
     }
 }

@@ -1,4 +1,6 @@
 ﻿using System.Configuration;
+using System.Drawing;
+using System.Security.Policy;
 using CommandLine;
 
 namespace RtaDiagramsDownloader;
@@ -13,6 +15,7 @@ public class Program
         [Option("dateEnd", Required = true, HelpText = "Дата окончания периода выгрузки карточек ДТП. Формат MM-yyyy.")]
         public string? dateEnd { get; set; }
     }
+
 
     public static async Task Main(string[] args)
     {
